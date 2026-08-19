@@ -20,7 +20,7 @@ This is the complete Bill of Materials (BOM) for the Mimo desktop robot. It incl
 | 12 | JST-PH 2-Pin Connectors | 2–3 | Rs. 100–200 | Rs. 100–200 | https://www.daraz.pk/catalog/?q=JST+PH+2+pin |
 | 13 | Connecting Wires | 1 pack | Rs. 200–400 | Rs. 200–400 | https://www.daraz.pk/catalog/?q=jumper+wire+electronics |
 | 14 | 2.54mm Pin Headers | 1 pack | Rs. 100–200 | Rs. 100–200 | https://www.daraz.pk/catalog/?q=2.54mm+pin+header |
-
+| 15 | 4 * 4 Inch Fur Fabric Piece | 1 | $10 | $10 | https://www.etsy.com/market/fur_fabric_pieces |
 ## Main Electronics
 
 The main electronics of Mimo are built around the XIAO ESP32-S3. The OLED provides the animated face, while the TTP223 allows Mimo to respond to touch.
@@ -39,7 +39,7 @@ The final cost will depend on the supplier, shipping method, PCB quantity and lo
 
 The estimated total project cost is approximately:
 
-**$55–75 USD**
+**$50-60 USD**
 
 This estimate includes the electronics, PCB manufacturing and shipping, enclosure fabrication, and required mounting/connectors.
 
