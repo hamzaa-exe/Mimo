@@ -1,614 +1,1072 @@
-/*
-  ============================================================================
-  MIMO — Cute Desktop Robot Firmware  (v2 — SSD1309 / U8g2)
-  Board: Seeed XIAO ESP32-S3
-  ============================================================================
-
-  HARDWARE (matches your schematic):
-    - OLED:      SSD1309, 128x64, I2C
-                 SDA = GPIO5, SCL = GPIO6
-    - Touch:     TTP223 digital output -> GPIO1 (D0)
-    - Amp:       MAX98357A (I2S)
-                 BCLK = GPIO7, LRC = GPIO8, DIN = GPIO9
-                 (AMP_GAIN tied to GND, AMP_SD tied to 3V3 on your board —
-                  both hardwired, no GPIO control needed)
-    - Audio:     WAV files (mono, 16-bit PCM, 16000 Hz) stored in LittleFS
-                 under /audio/*.wav
-
-  REQUIRED LIBRARIES (Arduino Library Manager):
-    - U8g2 (by olikraus)              <-- replaces Adafruit_GFX/SSD1306
-    - ArduinoJson (by Benoit Blanchon)
-    - ESP8266Audio (by Earle Philhower) -> AudioFileSourceLittleFS,
-      AudioGeneratorWAV, AudioOutputI2S (works fine on ESP32)
-    - Built-in: WiFi, HTTPClient, LittleFS, time.h
-
-  NOTE ON THE U8G2 CONSTRUCTOR:
-    Some SSD1309 panels need the "NONAME0" init sequence, others need
-    "NONAME2" (garbled/mirrored display = wrong variant). If your screen
-    looks wrong, just swap the class name below to:
-      U8G2_SSD1309_128X64_NONAME2_F_HW_I2C
-    everything else stays identical.
-
-  UPLOADING AUDIO FILES:
-    Use the "ESP32 Sketch Data Upload" tool (LittleFS uploader plugin) to
-    push a /data folder (containing /audio/*.wav) to the board.
-
-  STATE MACHINE:
-    IDLE  --touch--> TIME  --touch--> WEATHER  --touch--> IDLE ...
-  ============================================================================
-*/
-
+#include <Arduino.h>
 #include <Wire.h>
-#include <U8g2lib.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
-#include <time.h>
-#include <LittleFS.h>
+#include <U8g2lib.h>
+#include "driver/i2s_std.h"
 
-#include <AudioFileSourceLittleFS.h>
-#include <AudioGeneratorWAV.h>
-#include <AudioOutputI2S.h>
 
-// ============================================================================
-// CONFIG — matches your schematic. Only the WiFi/weather values need editing.
-// ============================================================================
+// ========================================================
+// USER SETTINGS
+// ========================================================
 
-// ---- OLED ----
-#define OLED_WIDTH      128
-#define OLED_HEIGHT     64
-#define OLED_SDA_PIN    5
-#define OLED_SCL_PIN    6
+// ---------- WiFi ----------
+const char* WIFI_SSID     = "Test";
+const char* WIFI_PASSWORD = "12345678";
 
-// ---- Touch sensor ----
-#define TOUCH_PIN       1
+// ---------- Weather ----------
+const char* CITY = "Rawalpindi";
+const char* COUNTRY_CODE = "PK";
 
-// ---- I2S / MAX98357A ----
-#define I2S_BCLK_PIN    7
-#define I2S_LRC_PIN     8
-#define I2S_DIN_PIN     9
+// Open-Meteo does not require an API key.
+// The program obtains latitude/longitude from the
+// Open-Meteo geocoding service.
 
-// ---- Wi-Fi ----
-// NOTE: for a real product, move these into a separate secrets.h (gitignored)
-// or a captive-portal WiFiManager. Kept here for simplicity of this sketch.
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
+// ---------- Your location ----------
+float LATITUDE  = 33.5651;
+float LONGITUDE = 73.0169;
 
-// ---- Weather (OpenWeatherMap) ----
-const char* WEATHER_API_KEY = "YOUR_OPENWEATHERMAP_API_KEY";
-const char* WEATHER_CITY    = "Rawalpindi";
-const char* WEATHER_COUNTRY = "PK";
-const char* WEATHER_UNITS   = "metric";  // "metric" = Celsius, "imperial" = F
 
-// ---- Time / NTP ----
-const char* NTP_SERVER      = "pool.ntp.org";
-const long  GMT_OFFSET_SEC  = 5 * 3600;   // Pakistan Standard Time = UTC+5
-const int   DST_OFFSET_SEC  = 0;
+// ========================================================
+// PIN DEFINITIONS
+// ========================================================
 
-// ---- Timings (ms) ----
-const unsigned long TOUCH_DEBOUNCE_MS        = 250;
-const unsigned long TIME_MODE_DURATION_MS    = 6000;
-const unsigned long WEATHER_MODE_DURATION_MS = 8000;
-const unsigned long WEATHER_CACHE_MS         = 5UL * 60UL * 1000UL; // 5 min
-const unsigned long IDLE_SOUND_MIN_MS        = 15000;
-const unsigned long IDLE_SOUND_MAX_MS        = 45000;
+// OLED
+#define OLED_SDA_PIN 5     // XIAO D4
+#define OLED_SCL_PIN 6     // XIAO D5
 
-// ============================================================================
-// DISPLAY — U8g2, full frame buffer, hardware I2C
-// ============================================================================
-U8G2_SSD1309_128X64_NONAME0_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+// Touch
+#define TOUCH_PIN 1        // XIAO D0 = GPIO1
 
-// ============================================================================
-// GLOBALS
-// ============================================================================
-enum RobotState { STATE_IDLE, STATE_TIME, STATE_WEATHER };
-RobotState currentState = STATE_IDLE;
-unsigned long stateEnteredAt = 0;
+// MAX98357A I2S
+// Change these three if your physical wiring is different.
+#define I2S_BCLK_PIN 43    // XIAO D6
+#define I2S_LRC_PIN  44    // XIAO D7
+#define I2S_DIN_PIN   7    // XIAO D8
 
-// ---- Touch handling ----
-bool touchLastRaw = false;
-bool touchStable = false;
-unsigned long touchLastChangeAt = 0;
 
-// ---- Wi-Fi state ----
-bool wifiConnected = false;
-unsigned long lastWifiAttemptAt = 0;
-const unsigned long WIFI_RETRY_INTERVAL_MS = 15000;
+// ========================================================
+// OLED
+// ========================================================
 
-// ---- Weather cache ----
-struct WeatherData {
-  bool valid = false;
-  float tempC = 0;
-  String condition = "";
-  String icon = "";
-  unsigned long fetchedAt = 0;
+// SSD1309 128x64 I2C
+U8G2_SSD1309_128X64_NONAME0_F_HW_I2C oled(
+  U8G2_R0,
+  U8X8_PIN_NONE
+);
+
+
+// ========================================================
+// I2S
+// ========================================================
+
+i2s_chan_handle_t tx_handle;
+
+
+// ========================================================
+// MIMO STATES
+// ========================================================
+
+enum RobotMode
+{
+  MODE_ANIMATION,
+  MODE_TIME,
+  MODE_WEATHER
 };
-WeatherData weather;
 
-// ---- Eye animation state ----
-enum EyeMood { EYE_NORMAL, EYE_HAPPY, EYE_SLEEPY, EYE_SURPRISED };
-EyeMood eyeMood = EYE_NORMAL;
+RobotMode mode = MODE_ANIMATION;
 
-float eyeOpenAmount = 1.0;      // 0 = fully closed, 1 = fully open (for blinking)
-int   eyeOffsetX = 0;           // pupil look direction
-int   eyeOffsetY = 0;
-unsigned long nextBlinkAt = 0;
-unsigned long nextLookAt = 0;
-unsigned long nextMoodChangeAt = 0;
-bool  blinking = false;
-unsigned long blinkStartedAt = 0;
-const unsigned long BLINK_DURATION_MS = 180;
 
-// ---- Idle random sound ----
-unsigned long nextIdleSoundAt = 0;
+// ========================================================
+// TIMING
+// ========================================================
 
-// ---- Audio playback (non-blocking) ----
-AudioGeneratorWAV *audioGen = nullptr;
-AudioFileSourceLittleFS *audioFile = nullptr;
-AudioOutputI2S *audioOut = nullptr;
-bool audioBusy = false;
+unsigned long lastTouch = 0;
+unsigned long screenStart = 0;
+unsigned long lastAnimation = 0;
 
-// ============================================================================
-// FORWARD DECLARATIONS
-// ============================================================================
-void connectWiFi();
-void handleTouch();
-void onTouchDetected();
-void updateEyes();
-void drawEyes();
-void enterState(RobotState newState);
-void showTime();
-void fetchAndShowWeather();
-bool fetchWeather();
-void showWeather();
-void drawWeatherGlyph(int cx, int cy);
-void playSound(const char* path);
-void updateAudio();
-void maybePlayIdleSound();
+const unsigned long TOUCH_DELAY = 500;
+const unsigned long INFO_TIMEOUT = 8000;
 
-// ============================================================================
-// SETUP
-// ============================================================================
-void setup() {
-  Serial.begin(115200);
-  delay(200);
 
-  pinMode(TOUCH_PIN, INPUT);
+// ========================================================
+// ANIMATION
+// ========================================================
 
-  // ---- OLED init ----
-  Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
-  u8g2.begin();
-  u8g2.clearBuffer();
-  u8g2.sendBuffer();
+int animationFrame = 0;
 
-  // ---- LittleFS for audio ----
-  if (!LittleFS.begin(true)) {
-    Serial.println("LittleFS mount failed. Audio playback will be disabled.");
-  }
+enum Emotion
+{
+  HAPPY,
+  NORMAL,
+  LOVE,
+  SLEEPY,
+  SURPRISED,
+  ANGRY
+};
 
-  // ---- Audio output object (created once, reused) ----
-  audioOut = new AudioOutputI2S();
-  audioOut->SetPinout(I2S_BCLK_PIN, I2S_LRC_PIN, I2S_DIN_PIN);
-  audioOut->SetGain(0.6); // adjust volume 0.0–1.0
+Emotion currentEmotion = NORMAL;
 
-  // ---- Wi-Fi (bounded-wait attempt kicked off here) ----
-  WiFi.mode(WIFI_STA);
-  connectWiFi();
 
-  // ---- Seed random for organic eye behavior ----
-  randomSeed(esp_random());
-  nextBlinkAt      = millis() + random(2000, 5000);
-  nextLookAt       = millis() + random(3000, 7000);
-  nextMoodChangeAt = millis() + random(8000, 15000);
-  nextIdleSoundAt  = millis() + random(IDLE_SOUND_MIN_MS, IDLE_SOUND_MAX_MS);
+// ========================================================
+// WEATHER DATA
+// ========================================================
 
-  stateEnteredAt = millis();
+String weatherText = "Loading...";
+float temperature = 0;
 
-  // Greeting sound on boot (non-blocking; silently skipped if file missing)
-  playSound("/audio/hello.wav");
-}
+bool weatherAvailable = false;
 
-// ============================================================================
-// MAIN LOOP — everything here must be non-blocking
-// ============================================================================
-void loop() {
-  unsigned long now = millis();
 
-  if (!wifiConnected && (now - lastWifiAttemptAt > WIFI_RETRY_INTERVAL_MS)) {
-    connectWiFi();
-  }
+// ========================================================
+// I2S INITIALIZATION
+// ========================================================
 
-  handleTouch();
-  updateAudio();
+void setupI2S()
+{
+  i2s_chan_config_t chan_cfg =
+    I2S_CHANNEL_DEFAULT_CONFIG(
+      I2S_NUM_AUTO,
+      I2S_ROLE_MASTER
+    );
 
-  switch (currentState) {
-    case STATE_IDLE:
-      updateEyes();
-      drawEyes();
-      maybePlayIdleSound();
-      break;
+  i2s_new_channel(
+    &chan_cfg,
+    &tx_handle,
+    NULL
+  );
 
-    case STATE_TIME:
-      showTime();
-      if (now - stateEnteredAt > TIME_MODE_DURATION_MS) {
-        enterState(STATE_IDLE);
-      }
-      break;
+  i2s_std_config_t std_cfg = {
 
-    case STATE_WEATHER:
-      showWeather();
-      if (now - stateEnteredAt > WEATHER_MODE_DURATION_MS) {
-        enterState(STATE_IDLE);
-      }
-      break;
-  }
-}
+    .clk_cfg =
+      I2S_STD_CLK_DEFAULT_CONFIG(22050),
 
-// ============================================================================
-// STATE MACHINE HELPERS
-// ============================================================================
-void enterState(RobotState newState) {
-  currentState = newState;
-  stateEnteredAt = millis();
+    .slot_cfg =
+      I2S_STD_MSB_SLOT_DEFAULT_CONFIG(
+        I2S_DATA_BIT_WIDTH_16BIT,
+        I2S_SLOT_MODE_MONO
+      ),
 
-  if (newState == STATE_TIME) {
-    playSound("/audio/touch.wav");
-  } else if (newState == STATE_WEATHER) {
-    playSound("/audio/weather.wav");
-    fetchAndShowWeather(); // uses cache if fresh, else fetches
-  }
-}
-
-// ============================================================================
-// TOUCH HANDLING (debounced, edge-triggered, one action per physical touch)
-// ============================================================================
-void handleTouch() {
-  bool raw = digitalRead(TOUCH_PIN) == HIGH;
-  unsigned long now = millis();
-
-  if (raw != touchLastRaw) {
-    touchLastChangeAt = now;
-    touchLastRaw = raw;
-  }
-
-  if ((now - touchLastChangeAt) > TOUCH_DEBOUNCE_MS && raw != touchStable) {
-    touchStable = raw;
-
-    // Fire only on rising edge (finger just touched down) so holding
-    // the sensor doesn't repeatedly cycle modes.
-    if (touchStable == true) {
-      onTouchDetected();
+    .gpio_cfg = {
+      .mclk = I2S_GPIO_UNUSED,
+      .bclk = (gpio_num_t)I2S_BCLK_PIN,
+      .ws   = (gpio_num_t)I2S_LRC_PIN,
+      .dout = (gpio_num_t)I2S_DIN_PIN,
+      .din  = I2S_GPIO_UNUSED
     }
-  }
+  };
+
+  i2s_channel_init_std_mode(
+    tx_handle,
+    &std_cfg
+  );
+
+  i2s_channel_enable(tx_handle);
 }
 
-void onTouchDetected() {
-  switch (currentState) {
-    case STATE_IDLE:
-      enterState(STATE_TIME);
-      break;
-    case STATE_TIME:
-      enterState(STATE_WEATHER);
-      break;
-    case STATE_WEATHER:
-      enterState(STATE_IDLE);
-      break;
-  }
-}
 
-// ============================================================================
-// WI-FI
-// ============================================================================
-void connectWiFi() {
-  lastWifiAttemptAt = millis();
+// ========================================================
+// PLAY SIMPLE CUTE SOUND
+// ========================================================
 
-  if (WiFi.status() == WL_CONNECTED) {
-    wifiConnected = true;
+void playTone(
+  float frequency,
+  int duration,
+  float volume = 0.15
+)
+{
+  const int sampleRate = 22050;
+
+  int samples =
+    sampleRate * duration / 1000;
+
+  int16_t* buffer =
+    (int16_t*)malloc(samples * sizeof(int16_t));
+
+  if (!buffer)
     return;
+
+  for (int i = 0; i < samples; i++)
+  {
+    float t =
+      (float)i / sampleRate;
+
+    float wave =
+      sin(2.0 * PI * frequency * t);
+
+    buffer[i] =
+      (int16_t)(
+        wave *
+        32767 *
+        volume
+      );
   }
 
-  Serial.println("Connecting to WiFi...");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  size_t bytesWritten;
 
-  // Bounded wait so we never freeze animations for long; a few hundred ms
-  // is an acceptable one-time hit at boot, retries afterward are non-blocking.
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 5000) {
-    delay(50);
-  }
+  i2s_channel_write(
+    tx_handle,
+    buffer,
+    samples * sizeof(int16_t),
+    &bytesWritten,
+    portMAX_DELAY
+  );
 
-  wifiConnected = (WiFi.status() == WL_CONNECTED);
+  free(buffer);
+}
 
-  if (wifiConnected) {
-    Serial.print("WiFi connected. IP: ");
-    Serial.println(WiFi.localIP());
-    configTime(GMT_OFFSET_SEC, DST_OFFSET_SEC, NTP_SERVER);
-  } else {
-    Serial.println("WiFi connection failed — will retry later.");
+
+// ========================================================
+// MIMO VOICE
+// ========================================================
+
+void mimoHello()
+{
+  playTone(700, 100);
+  playTone(900, 120);
+  playTone(1200, 180);
+}
+
+void mimoHappy()
+{
+  playTone(900, 80);
+  playTone(1200, 100);
+  playTone(1500, 180);
+}
+
+void mimoTouchSound()
+{
+  playTone(1000, 70);
+  playTone(1400, 100);
+}
+
+void mimoWeatherSound()
+{
+  playTone(700, 100);
+  playTone(850, 100);
+  playTone(1100, 180);
+}
+
+
+// ========================================================
+// DRAW EYES
+// ========================================================
+
+void drawNormalEyes()
+{
+  oled.clearBuffer();
+
+  // left eye
+  oled.drawRBox(
+    25,
+    20,
+    28,
+    25,
+    7
+  );
+
+  // right eye
+  oled.drawRBox(
+    75,
+    20,
+    28,
+    25,
+    7
+  );
+
+  oled.sendBuffer();
+}
+
+
+// ========================================================
+// HAPPY EYES
+// ========================================================
+
+void drawHappyEyes()
+{
+  oled.clearBuffer();
+
+  // left happy eye
+  oled.drawDisc(
+    39,
+    32,
+    15
+  );
+
+  // right happy eye
+  oled.drawDisc(
+    89,
+    32,
+    15
+  );
+
+  // black lower cuts to make smile-like eyes
+  oled.setDrawColor(0);
+
+  oled.drawBox(
+    22,
+    32,
+    34,
+    20
+  );
+
+  oled.drawBox(
+    72,
+    32,
+    34,
+    20
+  );
+
+  oled.setDrawColor(1);
+
+  oled.sendBuffer();
+}
+
+
+// ========================================================
+// LOVE EYES
+// ========================================================
+
+void drawLoveEyes()
+{
+  oled.clearBuffer();
+
+  // left heart
+  oled.drawDisc(32, 29, 8);
+  oled.drawDisc(45, 29, 8);
+  oled.drawTriangle(
+    24, 33,
+    53, 33,
+    38, 48
+  );
+
+  // right heart
+  oled.drawDisc(78, 29, 8);
+  oled.drawDisc(91, 29, 8);
+  oled.drawTriangle(
+    70, 33,
+    99, 33,
+    85, 48
+  );
+
+  oled.sendBuffer();
+}
+
+
+// ========================================================
+// SURPRISED
+// ========================================================
+
+void drawSurprised()
+{
+  oled.clearBuffer();
+
+  oled.drawCircle(
+    39,
+    32,
+    14
+  );
+
+  oled.drawCircle(
+    89,
+    32,
+    14
+  );
+
+  oled.sendBuffer();
+}
+
+
+// ========================================================
+// SLEEPY
+// ========================================================
+
+void drawSleepy()
+{
+  oled.clearBuffer();
+
+  oled.drawLine(
+    22, 34,
+    54, 34
+  );
+
+  oled.drawLine(
+    74, 34,
+    106, 34
+  );
+
+  oled.sendBuffer();
+}
+
+
+// ========================================================
+// ANGRY
+// ========================================================
+
+void drawAngry()
+{
+  oled.clearBuffer();
+
+  oled.drawLine(
+    22, 22,
+    54, 30
+  );
+
+  oled.drawLine(
+    74, 30,
+    106, 22
+  );
+
+  oled.drawRBox(
+    27,
+    30,
+    25,
+    15,
+    4
+  );
+
+  oled.drawRBox(
+    76,
+    30,
+    25,
+    15,
+    4
+  );
+
+  oled.sendBuffer();
+}
+
+
+// ========================================================
+// RANDOM EMOTION
+// ========================================================
+
+void randomEmotion()
+{
+  int e = random(0, 5);
+
+  switch (e)
+  {
+    case 0:
+      currentEmotion = NORMAL;
+      break;
+
+    case 1:
+      currentEmotion = HAPPY;
+      break;
+
+    case 2:
+      currentEmotion = LOVE;
+      break;
+
+    case 3:
+      currentEmotion = SLEEPY;
+      break;
+
+    case 4:
+      currentEmotion = SURPRISED;
+      break;
   }
 }
 
-// ============================================================================
-// TIME MODE
-// ============================================================================
-void showTime() {
-  u8g2.clearBuffer();
 
-  if (!wifiConnected) {
-    u8g2.setFont(u8g2_font_6x10_tf);
-    u8g2.drawStr(20, 34, "No WiFi :(");
-    u8g2.sendBuffer();
+// ========================================================
+// ANIMATION LOOP
+// ========================================================
+
+void animateMimo()
+{
+  if (
+    millis() -
+    lastAnimation <
+    1200
+  )
     return;
+
+  lastAnimation = millis();
+
+  animationFrame++;
+
+  if (animationFrame % 5 == 0)
+  {
+    randomEmotion();
   }
 
+  switch (currentEmotion)
+  {
+    case NORMAL:
+      drawNormalEyes();
+      break;
+
+    case HAPPY:
+      drawHappyEyes();
+      break;
+
+    case LOVE:
+      drawLoveEyes();
+      break;
+
+    case SLEEPY:
+      drawSleepy();
+      break;
+
+    case SURPRISED:
+      drawSurprised();
+      break;
+
+    case ANGRY:
+      drawAngry();
+      break;
+  }
+}
+
+
+// ========================================================
+// SHOW TIME
+// ========================================================
+
+void showTime()
+{
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo, 100)) {
-    u8g2.setFont(u8g2_font_6x10_tf);
-    u8g2.drawStr(10, 34, "Getting time...");
-    u8g2.sendBuffer();
+
+  if (!getLocalTime(&timeinfo))
+  {
+    oled.clearBuffer();
+
+    oled.setFont(
+      u8g2_font_6x12_tf
+    );
+
+    oled.drawStr(
+      20,
+      30,
+      "No time :("
+    );
+
+    oled.sendBuffer();
+
     return;
   }
 
-  int hour12 = timeinfo.tm_hour % 12;
-  if (hour12 == 0) hour12 = 12;
-  bool isPM = timeinfo.tm_hour >= 12;
+  char timeString[20];
 
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%d:%02d %s", hour12, timeinfo.tm_min, isPM ? "PM" : "AM");
+  strftime(
+    timeString,
+    sizeof(timeString),
+    "%H:%M",
+    &timeinfo
+  );
 
-  u8g2.setFont(u8g2_font_logisoso18_tr);
-  int w = u8g2.getStrWidth(buf);
-  u8g2.drawStr((OLED_WIDTH - w) / 2, 40, buf);
+  char dateString[30];
 
-  u8g2.sendBuffer();
+  strftime(
+    dateString,
+    sizeof(dateString),
+    "%d/%m/%Y",
+    &timeinfo
+  );
+
+  oled.clearBuffer();
+
+  oled.setFont(
+    u8g2_font_6x12_tf
+  );
+
+  oled.drawStr(
+    48,
+    12,
+    "TIME"
+  );
+
+  oled.setFont(
+    u8g2_font_logisoso24_tf
+  );
+
+  oled.drawStr(
+    18,
+    43,
+    timeString
+  );
+
+  oled.setFont(
+    u8g2_font_6x12_tf
+  );
+
+  oled.drawStr(
+    39,
+    59,
+    dateString
+  );
+
+  oled.sendBuffer();
 }
 
-// ============================================================================
-// WEATHER MODE
-// ============================================================================
-void fetchAndShowWeather() {
-  unsigned long now = millis();
-  if (!weather.valid || (now - weather.fetchedAt > WEATHER_CACHE_MS)) {
-    fetchWeather();
+
+// ========================================================
+// WEATHER
+// ========================================================
+
+void getWeather()
+{
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    weatherAvailable = false;
+    return;
   }
-  showWeather();
-}
-
-bool fetchWeather() {
-  if (!wifiConnected) return false;
 
   HTTPClient http;
-  String url = "http://api.openweathermap.org/data/2.5/weather?q=";
-  url += WEATHER_CITY;
-  url += ",";
-  url += WEATHER_COUNTRY;
-  url += "&units=";
-  url += WEATHER_UNITS;
-  url += "&appid=";
-  url += WEATHER_API_KEY;
+
+  String url =
+    "https://api.open-meteo.com/v1/forecast?"
+    "latitude=" +
+    String(LATITUDE, 4) +
+    "&longitude=" +
+    String(LONGITUDE, 4) +
+    "&current=temperature_2m,weather_code"
+    "&timezone=auto";
 
   http.begin(url);
-  http.setTimeout(5000);
-  int httpCode = http.GET();
 
-  if (httpCode != 200) {
-    Serial.printf("Weather fetch failed, HTTP code: %d\n", httpCode);
-    http.end();
-    return false;
+  int httpCode =
+    http.GET();
+
+  if (httpCode == 200)
+  {
+    String payload =
+      http.getString();
+
+    JsonDocument doc;
+
+    DeserializationError error =
+      deserializeJson(
+        doc,
+        payload
+      );
+
+    if (!error)
+    {
+      temperature =
+        doc["current"]
+           ["temperature_2m"];
+
+      int weatherCode =
+        doc["current"]
+           ["weather_code"];
+
+      weatherText =
+        weatherCodeToText(
+          weatherCode
+        );
+
+      weatherAvailable = true;
+    }
   }
 
-  String payload = http.getString();
   http.end();
-
-  StaticJsonDocument<1024> doc;
-  DeserializationError err = deserializeJson(doc, payload);
-  if (err) {
-    Serial.print("Weather JSON parse failed: ");
-    Serial.println(err.c_str());
-    return false;
-  }
-
-  weather.tempC = doc["main"]["temp"] | 0.0;
-  weather.condition = String((const char*)(doc["weather"][0]["main"] | "Unknown"));
-  weather.icon = String((const char*)(doc["weather"][0]["icon"] | ""));
-  weather.valid = true;
-  weather.fetchedAt = millis();
-  return true;
 }
 
-// Draws a tiny procedural weather glyph based on the OWM icon code prefix.
-void drawWeatherGlyph(int cx, int cy) {
-  bool sunny  = weather.icon.startsWith("01");
-  bool cloudy = weather.icon.startsWith("02") || weather.icon.startsWith("03") || weather.icon.startsWith("04");
-  bool rainy  = weather.icon.startsWith("09") || weather.icon.startsWith("10");
 
-  if (sunny) {
-    u8g2.drawDisc(cx, cy, 8);
-    for (int i = 0; i < 8; i++) {
-      float a = i * (PI / 4);
-      int x1 = cx + cos(a) * 12, y1 = cy + sin(a) * 12;
-      int x2 = cx + cos(a) * 16, y2 = cy + sin(a) * 16;
-      u8g2.drawLine(x1, y1, x2, y2);
-    }
-  } else if (rainy) {
-    u8g2.drawRBox(cx - 12, cy - 8, 24, 12, 5);
-    for (int i = -8; i <= 8; i += 8) {
-      u8g2.drawLine(cx + i, cy + 6, cx + i - 2, cy + 12);
-    }
-  } else if (cloudy) {
-    u8g2.drawRBox(cx - 12, cy - 6, 24, 12, 6);
-    u8g2.drawDisc(cx - 6, cy - 6, 7);
-    u8g2.drawDisc(cx + 4, cy - 8, 8);
-  } else {
-    u8g2.drawCircle(cx, cy, 10);
-  }
+// ========================================================
+// WEATHER CODE CONVERSION
+// ========================================================
+
+String weatherCodeToText(
+  int code
+)
+{
+  if (code == 0)
+    return "Sunny";
+
+  if (code <= 3)
+    return "Cloudy";
+
+  if (code <= 48)
+    return "Foggy";
+
+  if (code <= 67)
+    return "Rain";
+
+  if (code <= 77)
+    return "Snow";
+
+  if (code <= 82)
+    return "Showers";
+
+  if (code <= 86)
+    return "Snow";
+
+  return "Storm";
 }
 
-void showWeather() {
-  u8g2.clearBuffer();
 
-  if (!wifiConnected) {
-    u8g2.setFont(u8g2_font_6x10_tf);
-    u8g2.drawStr(20, 34, "No WiFi :(");
-    u8g2.sendBuffer();
+// ========================================================
+// SHOW WEATHER
+// ========================================================
+
+void showWeather()
+{
+  if (!weatherAvailable)
+  {
+    oled.clearBuffer();
+
+    oled.setFont(
+      u8g2_font_6x12_tf
+    );
+
+    oled.drawStr(
+      20,
+      25,
+      "Weather unavailable"
+    );
+
+    oled.drawStr(
+      28,
+      45,
+      "Check WiFi :("
+    );
+
+    oled.sendBuffer();
+
     return;
   }
 
-  if (!weather.valid) {
-    u8g2.setFont(u8g2_font_6x10_tf);
-    u8g2.drawStr(5, 34, "Fetching weather...");
-    u8g2.sendBuffer();
+  oled.clearBuffer();
+
+  oled.setFont(
+    u8g2_font_6x12_tf
+  );
+
+  oled.drawStr(
+    42,
+    12,
+    "WEATHER"
+  );
+
+  oled.setFont(
+    u8g2_font_logisoso24_tf
+  );
+
+  String temp =
+    String(
+      temperature,
+      1
+    ) +
+    "C";
+
+  oled.drawStr(
+    25,
+    43,
+    temp.c_str()
+  );
+
+  oled.setFont(
+    u8g2_font_6x12_tf
+  );
+
+  oled.drawStr(
+    42,
+    59,
+    weatherText.c_str()
+  );
+
+  oled.sendBuffer();
+}
+
+
+// ========================================================
+// WIFI
+// ========================================================
+
+void connectWiFi()
+{
+  oled.clearBuffer();
+
+  oled.setFont(
+    u8g2_font_6x12_tf
+  );
+
+  oled.drawStr(
+    25,
+    30,
+    "Connecting WiFi..."
+  );
+
+  oled.sendBuffer();
+
+  WiFi.begin(
+    WIFI_SSID,
+    WIFI_PASSWORD
+  );
+
+  int attempts = 0;
+
+  while (
+    WiFi.status() != WL_CONNECTED &&
+    attempts < 30
+  )
+  {
+    delay(500);
+    attempts++;
+  }
+
+  oled.clearBuffer();
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    oled.drawStr(
+      32,
+      30,
+      "WiFi OK!"
+    );
+
+    oled.sendBuffer();
+
+    delay(800);
+  }
+  else
+  {
+    oled.drawStr(
+      25,
+      30,
+      "WiFi failed :("
+    );
+
+    oled.sendBuffer();
+
+    delay(800);
+  }
+}
+
+
+// ========================================================
+// NTP TIME
+// ========================================================
+
+void setupTime()
+{
+  // Pakistan UTC+5
+  configTime(
+    5 * 3600,
+    0,
+    "pool.ntp.org",
+    "time.nist.gov"
+  );
+}
+
+
+// ========================================================
+// TOUCH
+// ========================================================
+
+void touchPressed()
+{
+  if (
+    millis() -
+    lastTouch <
+    TOUCH_DELAY
+  )
     return;
+
+  lastTouch = millis();
+
+  mimoTouchSound();
+
+  if (mode == MODE_ANIMATION)
+  {
+    mode = MODE_TIME;
+
+    screenStart =
+      millis();
+
+    showTime();
   }
 
-  drawWeatherGlyph(OLED_WIDTH / 2, 16);
+  else if (mode == MODE_TIME)
+  {
+    mode = MODE_WEATHER;
 
-  // Temperature, e.g. "31" drawn big, degree circle + "C" drawn manually
-  // (avoids relying on a font's degree-symbol glyph being present)
-  char tempBuf[8];
-  snprintf(tempBuf, sizeof(tempBuf), "%.0f", weather.tempC);
+    screenStart =
+      millis();
 
-  u8g2.setFont(u8g2_font_logisoso18_tr);
-  int tempW = u8g2.getStrWidth(tempBuf);
-  int cW = u8g2.getStrWidth("C");
-  int totalW = tempW + 14 + cW; // + gap for degree circle
-  int startX = (OLED_WIDTH - totalW) / 2;
+    getWeather();
 
-  u8g2.drawStr(startX, 46, tempBuf);
-  u8g2.drawCircle(startX + tempW + 6, 30, 3);      // degree mark
-  u8g2.drawStr(startX + tempW + 14, 46, "C");
+    mimoWeatherSound();
 
-  u8g2.setFont(u8g2_font_6x10_tf);
-  int condW = u8g2.getStrWidth(weather.condition.c_str());
-  u8g2.drawStr((OLED_WIDTH - condW) / 2, 60, weather.condition.c_str());
+    showWeather();
+  }
 
-  u8g2.sendBuffer();
+  else
+  {
+    mode = MODE_ANIMATION;
+
+    screenStart =
+      millis();
+
+    mimoHappy();
+
+    drawHappyEyes();
+  }
 }
 
-// ============================================================================
-// EYE ANIMATION (idle mode) — all timing based on millis(), nothing blocks
-// ============================================================================
-void updateEyes() {
-  unsigned long now = millis();
 
-  // --- Blinking ---
-  if (!blinking && now >= nextBlinkAt) {
-    blinking = true;
-    blinkStartedAt = now;
-  }
-  if (blinking) {
-    unsigned long elapsed = now - blinkStartedAt;
-    float half = BLINK_DURATION_MS / 2.0;
-    if (elapsed < half) {
-      eyeOpenAmount = 1.0 - (elapsed / half);
-    } else if (elapsed < BLINK_DURATION_MS) {
-      eyeOpenAmount = (elapsed - half) / half;
-    } else {
-      blinking = false;
-      eyeOpenAmount = 1.0;
-      unsigned long nextGap = random(0, 10) > 8 ? random(150, 400) : random(2500, 7000);
-      nextBlinkAt = now + nextGap;
+// ========================================================
+// SETUP
+// ========================================================
+
+void setup()
+{
+  Serial.begin(115200);
+
+  randomSeed(
+    analogRead(0)
+  );
+
+  // Touch
+  pinMode(
+    TOUCH_PIN,
+    INPUT
+  );
+
+  // OLED
+  Wire.begin(
+    OLED_SDA_PIN,
+    OLED_SCL_PIN
+  );
+
+  oled.begin();
+
+  oled.clearBuffer();
+
+  oled.setFont(
+    u8g2_font_6x12_tf
+  );
+
+  oled.drawStr(
+    45,
+    30,
+    "MIMO"
+  );
+
+  oled.drawStr(
+    32,
+    48,
+    "Starting..."
+  );
+
+  oled.sendBuffer();
+
+  // Audio
+  setupI2S();
+
+  mimoHello();
+
+  // WiFi
+  connectWiFi();
+
+  // Time
+  setupTime();
+
+  // Weather
+  getWeather();
+
+  // Start animation
+  mode =
+    MODE_ANIMATION;
+
+  screenStart =
+    millis();
+
+  drawHappyEyes();
+
+  delay(1000);
+}
+
+
+// ========================================================
+// MAIN LOOP
+// ========================================================
+
+void loop()
+{
+  // ------------------------------------------------------
+  // TOUCH
+  // ------------------------------------------------------
+
+  if (
+    digitalRead(TOUCH_PIN)
+    == HIGH
+  )
+  {
+    touchPressed();
+
+    // Wait until finger is removed
+    while (
+      digitalRead(TOUCH_PIN)
+      == HIGH
+    )
+    {
+      delay(10);
     }
   }
 
-  // --- Occasional look left/right/up/down ---
-  if (now >= nextLookAt) {
-    int dir = random(0, 5);
-    switch (dir) {
-      case 0: eyeOffsetX = 0;  eyeOffsetY = 0;  break; // center
-      case 1: eyeOffsetX = -6; eyeOffsetY = 0;  break; // left
-      case 2: eyeOffsetX = 6;  eyeOffsetY = 0;  break; // right
-      case 3: eyeOffsetX = 0;  eyeOffsetY = -4; break; // up
-      case 4: eyeOffsetX = 0;  eyeOffsetY = 4;  break; // down
+
+  // ------------------------------------------------------
+  // AUTOMATIC RETURN TO ANIMATION
+  // ------------------------------------------------------
+
+  if (
+    mode != MODE_ANIMATION &&
+    millis() -
+    screenStart >
+    INFO_TIMEOUT
+  )
+  {
+    mode =
+      MODE_ANIMATION;
+
+    drawNormalEyes();
+  }
+
+
+  // ------------------------------------------------------
+  // ANIMATION
+  // ------------------------------------------------------
+
+  if (
+    mode ==
+    MODE_ANIMATION
+  )
+  {
+    animateMimo();
+  }
+
+
+  // ------------------------------------------------------
+  // UPDATE TIME SCREEN
+  // ------------------------------------------------------
+
+  if (
+    mode ==
+    MODE_TIME
+  )
+  {
+    static unsigned long lastClock =
+      0;
+
+    if (
+      millis() -
+      lastClock >
+      1000
+    )
+    {
+      lastClock =
+        millis();
+
+      showTime();
     }
-    nextLookAt = now + random(1500, 4000);
   }
 
-  // --- Occasional mood change ---
-  if (now >= nextMoodChangeAt) {
-    int m = random(0, 10);
-    if (m < 6) eyeMood = EYE_NORMAL;
-    else if (m < 8) eyeMood = EYE_HAPPY;
-    else if (m < 9) eyeMood = EYE_SLEEPY;
-    else eyeMood = EYE_SURPRISED;
-    nextMoodChangeAt = now + random(8000, 18000);
-  }
-}
 
-void drawEyes() {
-  u8g2.clearBuffer();
-
-  int eyeW = 26;
-  int eyeH = 34;
-  int gap  = 20;
-  int cx = OLED_WIDTH / 2;
-  int cy = OLED_HEIGHT / 2;
-
-  int leftX  = cx - gap / 2 - eyeW / 2 + eyeOffsetX;
-  int rightX = cx + gap / 2 - eyeW / 2 + eyeOffsetX;
-  int y = cy - eyeH / 2 + eyeOffsetY;
-
-  float openness = eyeOpenAmount;
-  if (eyeMood == EYE_SLEEPY) openness *= 0.45;      // droopy eyes
-  if (eyeMood == EYE_SURPRISED) openness = min(1.3f, openness * 1.3f);
-
-  int drawH = (int)(eyeH * openness);
-  int drawY = y + (eyeH - drawH) / 2;
-
-  int radius = 8;
-  if (eyeMood == EYE_SURPRISED) radius = 12; // rounder = more "wide-eyed"
-  radius = min(radius, max(1, drawH / 2)); // keep radius sane when nearly closed
-
-  u8g2.drawRBox(leftX,  drawY, eyeW, max(2, drawH), radius);
-  u8g2.drawRBox(rightX, drawY, eyeW, max(2, drawH), radius);
-
-  // Happy mood: carve a curved "smile bump" out of the bottom of each eye
-  if (eyeMood == EYE_HAPPY && openness > 0.5) {
-    u8g2.setDrawColor(0);
-    u8g2.drawRBox(leftX - 2,  drawY + drawH - 6, eyeW + 4, 10, 6);
-    u8g2.drawRBox(rightX - 2, drawY + drawH - 6, eyeW + 4, 10, 6);
-    u8g2.setDrawColor(1);
-  }
-
-  u8g2.sendBuffer();
-}
-
-// ============================================================================
-// AUDIO PLAYBACK — non-blocking WAV playback from LittleFS
-// ============================================================================
-void playSound(const char* path) {
-  if (!LittleFS.exists(path)) {
-    // Silently skip if the audio asset hasn't been uploaded yet.
-    return;
-  }
-
-  if (audioGen && audioGen->isRunning()) {
-    audioGen->stop();
-  }
-  delete audioGen;
-  delete audioFile;
-
-  audioFile = new AudioFileSourceLittleFS(path);
-  audioGen  = new AudioGeneratorWAV();
-  audioGen->begin(audioFile, audioOut);
-  audioBusy = true;
-}
-
-void updateAudio() {
-  if (audioGen && audioGen->isRunning()) {
-    if (!audioGen->loop()) {
-      audioGen->stop();
-      audioBusy = false;
-    }
-  } else {
-    audioBusy = false;
-  }
-}
-
-void maybePlayIdleSound() {
-  unsigned long now = millis();
-  if (now >= nextIdleSoundAt && !audioBusy) {
-    playSound("/audio/happy.wav");
-    nextIdleSoundAt = now + random(IDLE_SOUND_MIN_MS, IDLE_SOUND_MAX_MS);
-  }
+  delay(10);
 }
