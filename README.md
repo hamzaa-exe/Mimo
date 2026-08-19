@@ -4,6 +4,13 @@ Mimo is a cute DIY desktop robot built around the Seeed Studio XIAO ESP32-S3. It
 
 Mimo normally displays cute animated eyes and different emotions. The user can interact with Mimo by touching the TTP223 sensor, which cycles through different modes such as time, weather, and the normal animation mode.
 
+<img width="1029" height="394" alt="SCHEMATIC 1" src="https://github.com/user-attachments/assets/add99e50-c9e0-4e2b-8fdd-ad9473f4257e" />
+<img width="387" height="419" alt="SCHEMATIC 3" src="https://github.com/user-attachments/assets/fba7a5a6-e467-42c4-95ef-a1c63459a08d" />
+<img width="447" height="506" alt="SChematic 2" src="https://github.com/user-attachments/assets/32961bbe-4a90-4163-aad1-a1bef523eef8" />
+<img width="624" height="512" alt="PCB FINALLLLLLLLLLL" src="https://github.com/user-attachments/assets/32c484b4-45d3-4edb-b857-6cbf87a9d06c" />
+<img width="489" height="332" alt="MIMO CASE FINAL 1" src="https://github.com/user-attachments/assets/2f8115e9-12a2-4b04-9807-ad0b7cf6d5d8" />
+<img width="399" height="270" alt="MIMO CASE FINAL" src="https://github.com/user-attachments/assets/e9521f14-e99a-4da8-8321-98c3850c68a5" />
+
 ## Features
 
 - Cute animated eyes and different emotions
