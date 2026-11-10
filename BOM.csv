@@ -1,20 +1,20 @@
 #,Component,Qty,Total (USD),Purchase Link
-1,XIAO ESP32-S3,1,$7 ,www.aliexpress.com
-2,"2.42"" SSD1309 OLED 128x64 I2C",1,$5.12 ,www.aliexpress.com
-3,TTP223 Capacitive Touch Sensor,1,$3.67 ,www.aliexpress.com
-4,MAX98357A I2S Audio Amplifier,1,$3.09 ,www.aliexpress.com
-5,3W 4-ohm Speaker,1,$1.37 ,www.aliexpress.com
-6,3.7V Li-Po Battery,1,$2.00 ,www.aliexpress.com
-7,Slide ON/OFF Switch,1,$1.50 ,www.aliexpress.com
+1,XIAO ESP32-S3,1,$7 ,https://www.aliexpress.com/item/1005004459618789.html?spm=a2g0o.cart.0.0.846e38dazUpREL&mp=1&pdp_npi=6%40dis%21PKR%21PKR+2137.18%21PKR+970.87%21%21PKR+970.87%21%21%21%40212e377f17943151569755380e0fab%2112000057947959381%21ct%21PK%216216208635%21%211%210%21
+2,"2.42"" SSD1309 OLED 128x64 I2C",1,$6.26 ,https://www.aliexpress.com/item/1005012658410586.html?spm=a2g0o.cart.0.0.846e38dazUpREL&mp=1&pdp_npi=6%40dis%21PKR%21PKR+3256.20%21PKR+1973.26%21%21PKR+1973.26%21%21%21%40212e377f17943151569755380e0fab%2112000058991084352%21ct%21PK%216216208635%21%211%210%21
+3,TTP223 Capacitive Touch Sensor,1,$3.67 ,https://www.aliexpress.com/item/1005002552159461.html?spm=a2g0o.cart.0.0.846e38dazUpREL&mp=1&pdp_npi=6%40dis%21PKR%21PKR+712.39%21PKR+632.20%21%21PKR+632.20%21%21%21%40212e377f17943151536055247e0fab%2112000021108160423%21ct%21PK%216216208635%21%211%210%21
+4,MAX98357A I2S Audio Amplifier,1,$3.09 ,https://www.aliexpress.com/item/1005008787923721.html?spm=a2g0o.cart.0.0.846e38dazUpREL&mp=1&pdp_npi=6%40dis%21PKR%21PKR+917.53%21PKR+847.10%21%21PKR+847.10%21%21%21%40212e377f17943151536055247e0fab%2112000046666604111%21ct%21PK%216216208635%21%211%210%21
+5,3W 4-ohm Speaker,1,$1.37 ,https://www.aliexpress.com/item/1005008267342362.html?spm=a2g0o.cart.0.0.846e38dazUpREL&mp=1&pdp_npi=6%40dis%21PKR%21PKR+809.75%21PKR+343.59%21%21PKR+343.59%21%21%21%40212e377f17943151536055247e0fab%2112000044424101979%21ct%21PK%216216208635%21%211%210%21
+6,3.7V Li-Po Battery,1,$2.00 ,https://www.aliexpress.com/item/1005009240348340.html?spm=a2g0o.cart.0.0.846e38dazUpREL&mp=1&pdp_npi=6%40dis%21PKR%21PKR+2679.35%21PKR+709.23%21%21PKR+709.23%21%21%21%40212e377f17943151536055247e0fab%2112000048437368273%21ct%21PK%216216208635%21%211%210%21
+7,Slide ON/OFF Switch,1,$2.50 ,https://www.aliexpress.com/item/1005009364949564.html?spm=a2g0o.cart.0.0.846e38dazUpREL&mp=1&pdp_npi=6%40dis%21PKR%21PKR+972.37%21PKR+840.22%21%21PKR+840.22%21%21%21%40212e377f17943151536055247e0fab%2112000048900799129%21ct%21PK%216216208635%21%211%210%21
 8,Custom Mimo PCB,1,$2 ,https://jlcpcb.com
 9,PCB Shipping,1,$13 ,https://jlcpcb.com
-10,3D-Printed Mimo Enclosure,1,$7.5 ,Hackclub Printing Legion
-11,M2 Screws + Nuts/Standoffs,1 set,$5 ,www.aliexpress.com
-13,2.54mm Pin Headers,1 pack,$4 ,www.aliexpress.com
-14,4x4 Inch Fur Fabric Piece,1,$5 ,www.aliexpress.com
+10,3D-Printed Mimo Enclosure,1,$10 ,Hackclub Printing Legion
+11,M2 Screws + Nuts/Standoffs,1 set,$6.68 ,https://www.aliexpress.com/item/1005005816578643.html?spm=a2g0o.cart.0.0.846e38dazUpREL&mp=1&pdp_npi=6%40dis%21PKR%21PKR+3098.59%21PKR+2105.65%21%21PKR+2105.65%21%21%21%40212e377f17943151536055247e0fab%2112000034451948902%21ct%21PK%216216208635%21%211%210%21
+13,2.54mm Pin Headers,1 pack,$2 ,aliexpress.com/item/1005006733621288.html?spm=a2g0o.cart.0.0.846e38dazUpREL&mp=1&pdp_npi=6%40dis%21PKR%21PKR%20652.50%21PKR%20614.77%21%21PKR%20614.77%21%21%21%40212e377f17943151536055247e0fab%2112000038123990307%21ct%21PK%216216208635%21%211%210%21
+14,4x4 Inch Fur Fabric Piece,1,$5 ,https://www.aliexpress.com/item/1005002978332962.html?spm=a2g0o.productlist.main.21.393ff9c52POxMU&algo_pvid=db3773f1-a4bc-40fb-837a-76eeaa9fd136&algo_exp_id=db3773f1-a4bc-40fb-837a-76eeaa9fd136-20&pdp_ext_f=%7B%22order%22%3A%221301%22%2C%22spu_best_type%22%3A%22price%22%2C%22eval%22%3A%221%22%2C%22fromPage%22%3A%22search%22%7D&pdp_npi=6%40dis%21PKR%211585.55%211396.42%21%21%215.03%214.43%21%400be71e2017943153589935136e0f97%2112000023040518943%21sea%21PK%216216208635%21X%211%210%21n_tag%3A-29911%3Bd%3A50f7a79%3Bm03_new_user%3A-29895%3BpisId%3A5000000221157370&curPageLogUid=rpduauLzSZYQ&utparam-url=scene%3Asearch%7Cquery_from%3A%7Cx_object_id%3A1005002978332962%7C_p_origin_prod%3A
 15,Aliexpress Shipping,1,$35 ,www.aliexpress.com
-16,4.7K 0805 SMD resistor,2,$1.81,www.aliexpress.com
-17,100nF 0805 SMD ceramic capacitor,2,$0.61,www.aliexpress.com
-18,100uF SMD electrolytic capacitor 6.3V,1,$2.19,www.alixpress.com
+16,4.7K 0805 SMD resistor,2,$1.81,https://www.aliexpress.com/item/1005009026349718.html?spm=a2g0o.cart.0.0.441c38dafk580D&mp=1&pdp_npi=6%40dis%21PKR%21PKR%201347.23%21PKR%20616.36%21%21PKR%20616.36%21%21%21%40212e377f17943154100164236e0fab%2112000047630214982%21ct%21PK%216216208635%21%211%210%21
+17,100nF 0805 SMD ceramic capacitor,2,$1.61,https://www.aliexpress.com/item/1005006142309480.html?spm=a2g0o.cart.0.0.441c38dafk580D&mp=1&pdp_npi=6%40dis%21PKR%21PKR+767.68%21PKR+515.07%21%21PKR+515.07%21%21%21%40212e377f17943154100164236e0fab%2112000035950870240%21ct%21PK%216216208635%21%211%210%21
+18,100uF SMD electrolytic capacitor 6.3V,1,$2,aliexpress.com/item/1005006203362842.html?spm=a2g0o.cart.0.0.441c38dafk580D&mp=1&pdp_npi=6%40dis%21PKR%21PKR%20738.37%21PKR%20597.97%21%21PKR%20597.97%21%21%21%40212e377f17943154100164236e0fab%2112000036254829605%21ct%21PK%216216208635%21%211%210%21
 ,,,,
 ,,TOTAL:,$95 ,
